@@ -19,7 +19,7 @@ Log to a central MongoDB from Rails apps.
 1. For use with Heroku you need to prevent the rails_log_stdout plugin from being added by Heroku:
 
         mkdir vendor/plugins/rails_log_stdout
-	touch vendor/plugins/rails_log_stdout/.gitkeep
+        touch vendor/plugins/rails_log_stdout/.gitkeep
 
 1. If using Rails 3, SKIP this step.  Otherwise, add the following to config/environment.rb:
 
