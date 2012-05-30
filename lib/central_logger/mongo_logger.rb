@@ -142,7 +142,8 @@ module CentralLogger
 
       def connect
         if @db_configuration['uri']
-          return @mongo_connection ||= Mongo::Connection.from_uri( @db_configuration['uri'] )
+          @mongo_connection ||= Mongo::Connection.from_uri( @db_configuration['uri'] ).db(@db_configuration['database'])
+          return @mongo_connection
         end
 
         @mongo_connection ||= Mongo::Connection.new(@db_configuration['host'],
