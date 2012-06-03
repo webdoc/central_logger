@@ -29,12 +29,9 @@ module CentralLogger
       end
     rescue => e
       # should use a config block for this
-      if Rails.env.production? 
-        (raise e)
-      else
-        super(path, level)
-        puts "Using BufferedLogger due to exception: " + e.message
-      end
+      #if Rails.env.production? 
+      puts "Using BufferedLogger due to exception: " + e.message  
+      raise e
     end
 
     def add_metadata(options={})
