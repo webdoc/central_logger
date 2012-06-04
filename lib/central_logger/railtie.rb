@@ -8,9 +8,11 @@ if Rails::VERSION::MAJOR == 3
     # initializer will then skip its own initialization once Rails.logger is defined
     initializer :initialize_central_logger, :before => :initialize_logger do
       app_config = Rails.application.config
-
-      Rails.logger = config.logger = create_logger(app_config,
+     
+      clogger = create_logger(app_config,
         ((app_config.paths['log'] rescue nil) || app_config.paths.log.to_a).first)
+
+      Rails.logger = config.logger = clogger unless clogger.nil?
     end
   end
 end

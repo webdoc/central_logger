@@ -30,7 +30,7 @@ module CentralLogger
     rescue => e
       # should use a config block for this
       #if Rails.env.production? 
-      puts "Using BufferedLogger due to exception: " + e.message  
+      puts "Using BufferedLogger due to exception: #{e.inspect}"
       raise e
     end
 
