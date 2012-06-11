@@ -152,8 +152,10 @@ module CentralLogger
       end
 
       def create_collection
-        @mongo_connection.create_collection(@mongo_collection_name,
-                                            {:capped => true, :size => @db_configuration['capsize'].to_i})
+        options = {}
+        options[:capped] = !!@db_configuration['capsize']
+        options[:size] = @db_configuration['capsize'].to_i if options[:capped]
+        @mongo_connection.create_collection(@mongo_collection_name, options)
       end
 
       def check_for_collection
