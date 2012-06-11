@@ -29,7 +29,7 @@ module CentralLogger
       end
     rescue => e
       # should use a config block for this
-      #if Rails.env.production? 
+      #if Rails.env.production?
       puts "Using BufferedLogger due to exception: #{e.inspect}"
       raise e
     end
@@ -46,11 +46,31 @@ module CentralLogger
 
     def add(severity, message = nil, progname = nil, &block)
       $stdout.puts message
-      if @level <= severity && message.present? && @mongo_record.present?
+
+      if @level <= severity && message.present?
+
         # do not modify the original message used by the buffered logger
         msg = logging_colorized? ? message.to_s.gsub(/(\e(\[([\d;]*[mz]?))?)?/, '').strip : message
-        @mongo_record[:messages][LOG_LEVEL_SYM[severity]] << msg
+
+        # Add a special message with severity.
+        if @mongo_record.present?
+          @mongo_record[:messages][LOG_LEVEL_SYM[severity]] << msg
+        end
+
+        # Add a normal message for every composite message
+        if @db_configuration.fetch('log_individual_lines', true)
+          new_record = {
+            :severity => LOG_LEVEL_SYM[severity],
+            :message => msg,
+            :request_time => Time.now.getutc,
+            :application_name => @application_name,
+          }
+          new_record[:progname] = progname unless progname.nil?
+          @mongo_collection.insert(new_record, :safe => false)
+        end
+
       end
+
       # may modify the original message
       disable_file_logging? ? message : super
     end
