@@ -29,7 +29,9 @@ module CentralLogger
       end
     rescue => e
       # should use a config block for this
-      Rails.env.production? ? (raise e) : (puts "Using BufferedLogger due to exception: " + e.message)
+      #if Rails.env.production? 
+      puts "Using BufferedLogger due to exception: #{e.inspect}"
+      raise e
     end
 
     def add_metadata(options={})
@@ -43,6 +45,7 @@ module CentralLogger
     end
 
     def add(severity, message = nil, progname = nil, &block)
+      $stdout.puts message
       if @level <= severity && message.present? && @mongo_record.present?
         # do not modify the original message used by the buffered logger
         msg = logging_colorized? ? message.to_s.gsub(/(\e(\[([\d;]*[mz]?))?)?/, '').strip : message
@@ -141,6 +144,11 @@ module CentralLogger
       end
 
       def connect
+        if @db_configuration['uri']
+          @mongo_connection ||= Mongo::Connection.from_uri( @db_configuration['uri'] ).db(@db_configuration['database'])
+          return @mongo_connection
+        end
+
         @mongo_connection ||= Mongo::Connection.new(@db_configuration['host'],
                                                     @db_configuration['port']).db(@db_configuration['database'])
 
