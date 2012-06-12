@@ -44,9 +44,7 @@ module CentralLogger
       end
     end
 
-    def add(severity, message = nil, progname = nil, &block)
-      $stdout.puts message
-
+    def add(severity = @level, message = nil, progname = nil, &block)
       if @level <= severity && message.present?
 
         # do not modify the original message used by the buffered logger
