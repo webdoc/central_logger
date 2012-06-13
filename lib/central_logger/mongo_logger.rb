@@ -24,6 +24,7 @@ module CentralLogger
         @buffer        = {}
         @auto_flushing = 1
         @guard = Mutex.new
+        super(path, level)
       else
         super(path, level)
       end
@@ -44,8 +45,7 @@ module CentralLogger
       end
     end
 
-    def add(severity = @level, message = nil, progname = nil, &block)
-      @level ||= DEBUG
+    def add(severity, message = nil, progname = nil, &block)
       if @level <= severity && message.present?
 
         # do not modify the original message used by the buffered logger
