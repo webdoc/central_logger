@@ -46,6 +46,7 @@ module CentralLogger
     end
 
     def add(severity, message = nil, progname = nil, &block)
+      @level ||= DEBUG
       if @level <= severity && message.present?
 
         # do not modify the original message used by the buffered logger
