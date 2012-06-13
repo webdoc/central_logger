@@ -45,7 +45,7 @@ module CentralLogger
     end
 
     def add(severity = @level, message = nil, progname = nil, &block)
-      if @level <= severity && message.present?
+      if (@level || DEBUG) <= severity && message.present?
 
         # do not modify the original message used by the buffered logger
         msg = logging_colorized? ? message.to_s.gsub(/(\e(\[([\d;]*[mz]?))?)?/, '').strip : message
