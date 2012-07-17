@@ -1,6 +1,4 @@
 if Rails::VERSION::MAJOR == 2
-  require 'central_logger/initializer_mixin'
-
   module CentralLogger
     class Initializer
       extend CentralLogger::InitializerMixin

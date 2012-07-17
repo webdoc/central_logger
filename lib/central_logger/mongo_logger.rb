@@ -1,38 +1,49 @@
-require 'erb'
-require 'mongo'
-require 'central_logger/replica_set_helper'
-
 module CentralLogger
   class MongoLogger < ActiveSupport::BufferedLogger
-    include ReplicaSetHelper
 
-    MB = 2 ** 20
-    PRODUCTION_COLLECTION_SIZE = 256 * MB
-    DEFAULT_COLLECTION_SIZE = 128 * MB
-    # Looks for configuration files in this order
-    CONFIGURATION_FILES = ["central_logger.yml", "mongoid.yml", "database.yml"]
-    LOG_LEVEL_SYM = [:debug, :info, :warn, :error, :fatal, :unknown]
+    ## Mixins
 
-    attr_reader :db_configuration, :mongo_connection, :mongo_collection_name, :mongo_collection
+    include CentralLogger::Constants
 
-    def initialize(options={})
+    ## Instance Readers
+
+    attr_reader :configuration
+    attr_accessor :level
+
+    def initialize(options = {})
       path = options[:path] || File.join(Rails.root, "log/#{Rails.env}.log")
-      level = options[:level] || DEBUG
-      internal_initialize
-      if disable_file_logging?
-        @level = level
-        @buffer        = {}
-        @auto_flushing = 1
-        @guard = Mutex.new
+      @level = level = options[:level] || Severity::DEBUG
+
+      # Attempt to setup the mongodb logger connection.
+      @connected = false
+      begin
+        configure
+        check_for_collection
+
+        if disable_file_logging?
+          @buffer        = {}
+          @auto_flushing = 1
+          @guard = Mutex.new
+        end
+
+        @connected = true
+
+      rescue Exception => e
         super(path, level)
-      else
+        puts "Using BufferedLogger due to exception: #{e.inspect}"
+        add Severity::ERROR, e.to_s
+        add Severity::ERROR, e.backtrace.join("\n")
+        raise e
+      end
+
+      # Only enable file logging if specified.
+      unless disable_file_logging?
         super(path, level)
       end
-    rescue => e
-      # should use a config block for this
-      #if Rails.env.production?
-      puts "Using BufferedLogger due to exception: #{e.inspect}"
-      raise e
+
+    # Enable file loggin on any errors.
+    rescue Exception => e
+      super(path, level)
     end
 
     def add_metadata(options={})
@@ -46,52 +57,52 @@ module CentralLogger
     end
 
     def add(severity, message = nil, progname = nil, &block)
-      @level ||= DEBUG
-      if @level <= severity && message.present?
+      if @connected && @level <= severity && message.present?
 
-        # do not modify the original message used by the buffered logger
-        msg = logging_colorized? ? message.to_s.gsub(/(\e(\[([\d;]*[mz]?))?)?/, '').strip : message
+        # Create the hash of message data to be saved.
+        msg_h = {
+          :t => Time.now.getutc,
+          :m => message,
+          :s => log_levels[severity],
+        }
 
         # Add a special message with severity.
-        if @mongo_record.present?
-          @mongo_record[:messages][LOG_LEVEL_SYM[severity]] << msg
+        if @combine_request && @mongo_record.present?
+          @mongo_record[:ms] << msg_h
+        end
+
+        # Add in program name information
+        if progname.nil?
+          msg_h[:progname] = @application_name
+        else
+          msg_h[:progname] = progname
         end
 
         # Add a normal message for every composite message
-        if @db_configuration.fetch('log_individual_lines', true)
-          new_record = {
-            :severity => LOG_LEVEL_SYM[severity],
-            :message => msg,
-            :request_time => Time.now.getutc,
-            :application_name => @application_name,
-          }
-          new_record[:progname] = progname unless progname.nil?
-          @mongo_collection.insert(new_record, :safe => false)
+        if @individual_lines
+          LogMessage.with(safe: @safe_insert).create!(msg_h)
         end
 
       end
 
-      # may modify the original message
+      # If file logging has been disabled then simply return the message
+      # otherwise call super.
       disable_file_logging? ? message : super
     end
 
     # Drop the capped_collection and recreate it
     def reset_collection
-      @mongo_collection.drop
+      LogMessage.collection.drop
       create_collection
     end
 
-    def mongoize(options={})
-      @mongo_record = options.merge({
-        :messages => Hash.new { |hash, key| hash[key] = Array.new },
-        :request_time => Time.now.getutc,
-        :application_name => @application_name
-      })
-
+    # This method is used to capture messages as part of a full request.
+    def mongoize(options = {})
+      create_new_record(options)
       runtime = Benchmark.measure{ yield }.real if block_given?
     rescue Exception => e
       add(3, e.message + "\n" + e.backtrace.join("\n"))
-      # Reraise the exception for anyone else who cares
+      # Re-raise the exception for anyone else who cares
       raise e
     ensure
       # In case of exception, make sure runtime is set
@@ -105,118 +116,114 @@ module CentralLogger
       end
     end
 
-    def authenticated?
-      @authenticated
+    private
+
+    def configure
+      @configuration = {
+        'cap_data_size' => Rails.env.production? ? PRODUCTION_COLLECTION_SIZE : DEFAULT_COLLECTION_SIZE,
+        'cap_object_num' => Rails.env.production? ? PRODUCTION_NUM_OBJECTS : DEFAULT_NUM_OBJECTS,
+      }.merge(resolve_config)
+
+      Mongoid.load!(Rails.root.join("config", "mongoid.yml"), Rails.env)
+
+      @safe_insert = @configuration['safe_insert'] || false
+      @combine_request = @configuration.fetch('combine_request', true)
+      @individual_lines = @configuration.fetch('individual_lines', false)
+      @disable_file_logging = @configuration.fetch('disable_file_logging', false)
+      resolve_application_name
+
+      @insert_block = lambda { insert_log_record(@safe_insert) }
     end
 
-    private
-      # facilitate testing
-      def internal_initialize
-        configure
-        connect
-        check_for_collection
+    # @return hash of the log levels mapped from constants from lookup reverse
+    #   mapped required later.
+    def log_levels
+      @log_level_hash ||= ActiveSupport::BufferedLogger::Severity.constants.inject({}) do |h, v|
+        h[ActiveSupport::BufferedLogger::Severity.const_get(v.to_s)] = v.to_s
+        h
       end
+    end
 
-      def disable_file_logging?
-        @db_configuration.fetch('disable_file_logging', false)
+    def disable_file_logging?
+      @disable_file_logging
+    end
+
+    # @return [String] the name of the application determined once at runtime.
+    def resolve_application_name
+      return @application_name if @application_name
+
+      if @configuration.has_key?('application_name')
+        @application_name = @configuration['application_name']
+      elsif Rails::VERSION::MAJOR >= 3
+        @application_name = Rails.application.class.to_s.split("::").first
+      else
+        # rails 2 requires detective work if it's been deployed by capistrano
+        # if last entry is a timestamp, go back 2 dirs (ex. /app_name/releases/20110304132847)
+        path = Rails.root.to_s.split('/')
+        @application_name = path.length >= 4 && path.last =~ /^\d/ ? path.last(3)[0] : path.last
       end
+    end
 
-      def configure
-        default_capsize = Rails.env.production? ? PRODUCTION_COLLECTION_SIZE : DEFAULT_COLLECTION_SIZE
-        @mongo_collection_name = "#{Rails.env}_log"
-        @authenticated = false
-        @db_configuration = {
-          'host' => 'localhost',
-          'port' => 27017,
-          'capsize' => default_capsize}.merge(resolve_config)
-        @application_name = resolve_application_name
-        @safe_insert = @db_configuration['safe_insert'] || false
-
-        @insert_block = @db_configuration.has_key?('replica_set') && @db_configuration['replica_set'] ?
-          lambda { rescue_connection_failure{ insert_log_record(@safe_insert) } } :
-          lambda { insert_log_record }
-      end
-
-      def resolve_application_name
-        if @db_configuration.has_key?('application_name')
-          @db_configuration['application_name']
-        elsif Rails::VERSION::MAJOR >= 3
-          Rails.application.class.to_s.split("::").first
-        else
-          # rails 2 requires detective work if it's been deployed by capistrano
-          # if last entry is a timestamp, go back 2 dirs (ex. /app_name/releases/20110304132847)
-          path = Rails.root.to_s.split('/')
-          path.length >= 4 && path.last =~ /^\d/ ? path.last(3)[0] : path.last
+    def resolve_config
+      config = {}
+      CONFIGURATION_FILES.each do |filename|
+        config_file = Rails.root.join("config", filename)
+        if config_file.file?
+          config = YAML.load(File.read(config_file))[Rails.env]
+          config = config['mongo'] if config.has_key?('mongo')
+          break
         end
       end
+      config
+    end
 
-      def resolve_config
-        config = {}
-        CONFIGURATION_FILES.each do |filename|
-          config_file = Rails.root.join("config", filename)
-          if config_file.file?
-            config = YAML.load(ERB.new(config_file.read).result)[Rails.env]
-            config = config['mongo'] if config.has_key?('mongo')
-            break
-          end
-        end
-        config
-      end
-
-      def connect
-        if @db_configuration['uri']
-          @mongo_connection ||= Mongo::Connection.from_uri( @db_configuration['uri'] ).db(@db_configuration['database'])
-          return @mongo_connection
-        end
-
-        @mongo_connection ||= Mongo::Connection.new(@db_configuration['host'],
-                                                    @db_configuration['port']).db(@db_configuration['database'])
-
-        if @db_configuration['username'] && @db_configuration['password']
-          # the driver stores credentials in case reconnection is required
-          @authenticated = @mongo_connection.authenticate(@db_configuration['username'],
-                                                          @db_configuration['password'])
+    def create_collection
+      if !!@configuration['cap_object_num']
+        LogMessage.mongo_session.with(safe: true, database: LogMessage.collection.database.name) do |session|
+          session.command({
+            create: LogMessage.collection.name,
+            capped: true,
+            size: @configuration['cap_data_size'],
+            max: @configuration['cap_object_num']
+          })
         end
       end
+    end
 
-      def create_collection
-        options = {}
-        options[:capped] = !!@db_configuration['capsize']
-        options[:size] = @db_configuration['capsize'].to_i if options[:capped]
-        @mongo_connection.create_collection(@mongo_collection_name, options)
+    # Setup the capped collection if it doesn't already exist.
+    def check_for_collection
+      unless LogMessage.mongo_session.collections.map{ |c| c.name.to_s }.include?(Unroole::MeteredDataCounter.collection.name.to_s)
+        create_collection
+      end
+    end
+
+    # Creates a new combined record.
+    def create_new_record(options = {})
+      @mongo_record = LogMessage.new(options.merge({
+        :messages => [],
+        :time => Time.now.getutc,
+        :progname => resolve_application_name,
+        :combined => true
+      }))
+    end
+
+    # Insert a new record on rewquest end.
+    def insert_log_record(safe = false)
+      @mongo_record.with(safe: safe).save!
+      create_new_record
+    end
+
+    # force the data in the db by inspecting each top level array and hash element
+    # this will flatten other hashes and arrays
+    def force_serialize(rec)
+      if msgs = rec[:message]
+        msgs.collect! { |j| j.inspect }
       end
 
-      def check_for_collection
-        # setup the capped collection if it doesn't already exist
-        unless @mongo_connection.collection_names.include?(@mongo_collection_name)
-          create_collection
-        end
-        @mongo_collection = @mongo_connection[@mongo_collection_name]
+      if pms = rec[:params]
+        pms.each { |i, j| pms[i] = j.inspect }
       end
+    end
 
-      def insert_log_record(safe=false)
-        @mongo_collection.insert(@mongo_record, :safe => safe)
-      end
-
-      def logging_colorized?
-        # Cache it since these ActiveRecord attributes are assigned after logger initialization occurs in Rails boot
-        @colorized ||= Object.const_defined?(:ActiveRecord) &&
-        (Rails::VERSION::MAJOR >= 3 ?
-          ActiveRecord::LogSubscriber.colorize_logging :
-          ActiveRecord::Base.colorize_logging)
-      end
-
-      # force the data in the db by inspecting each top level array and hash element
-      # this will flatten other hashes and arrays
-      def force_serialize(rec)
-        if msgs = rec[:messages]
-          LOG_LEVEL_SYM.each do |i|
-            msgs[i].collect! { |j| j.inspect } if msgs[i]
-          end
-        end
-        if pms = rec[:params]
-          pms.each { |i, j| pms[i] = j.inspect }
-        end
-      end
-  end # class MongoLogger
+  end
 end

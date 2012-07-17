@@ -1,6 +1,4 @@
 if Rails::VERSION::MAJOR == 3
-  require 'central_logger/initializer_mixin'
-
   class Railtie < Rails::Railtie
     include CentralLogger::InitializerMixin
 
@@ -8,7 +6,7 @@ if Rails::VERSION::MAJOR == 3
     # initializer will then skip its own initialization once Rails.logger is defined
     initializer :initialize_central_logger, :before => :initialize_logger do
       app_config = Rails.application.config
-     
+
       clogger = create_logger(app_config,
         ((app_config.paths['log'] rescue nil) || app_config.paths.log.to_a).first)
 
