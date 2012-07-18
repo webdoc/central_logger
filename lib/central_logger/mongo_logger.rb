@@ -87,7 +87,11 @@ module CentralLogger
 
       # If file logging has been disabled then simply return the message
       # otherwise call super.
-      disable_file_logging? ? message : super
+      if @connection
+        disable_file_logging? ? message : super
+      else
+        super
+      end
     end
 
     # Drop the capped_collection and recreate it
