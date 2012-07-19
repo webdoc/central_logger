@@ -7,6 +7,7 @@ module CentralLogger
 
     ## Instance Readers
 
+    attr_reader :connected
     attr_reader :configuration
     attr_accessor :level
 
@@ -87,7 +88,7 @@ module CentralLogger
 
       # If file logging has been disabled then simply return the message
       # otherwise call super.
-      if @connection
+      if @connected
         disable_file_logging? ? message : super
       else
         super
@@ -133,7 +134,6 @@ module CentralLogger
       @safe_insert = @configuration['safe_insert'] || false
       @combine_request = @configuration.fetch('combine_request', true)
       @individual_lines = @configuration.fetch('individual_lines', false)
-      @disable_file_logging = @configuration.fetch('disable_file_logging', false)
       resolve_application_name
 
       @insert_block = lambda { insert_log_record(@safe_insert) }
@@ -149,7 +149,7 @@ module CentralLogger
     end
 
     def disable_file_logging?
-      @disable_file_logging
+      @disable_file_logging ||= @configuration.fetch('disable_file_logging', false)
     end
 
     # @return [String] the name of the application determined once at runtime.
