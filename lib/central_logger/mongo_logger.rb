@@ -196,7 +196,7 @@ module CentralLogger
 
     # Setup the capped collection if it doesn't already exist.
     def check_for_collection
-      unless LogMessage.mongo_session.collections.map{ |c| c.name.to_s }.include?(Unroole::MeteredDataCounter.collection.name.to_s)
+      unless LogMessage.mongo_session.collections.map{ |c| c.name.to_s }.include?(LogMessage.collection.name.to_s)
         create_collection
       end
     end
