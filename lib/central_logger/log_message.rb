@@ -7,7 +7,7 @@ module CentralLogger
 
     ## MongoDB Configs
 
-    store_in collection: "#{Rails.application.class.to_s.split("::").first}_#{Rails.env}", session: "logs"
+    store_in collection: "#{Rails.env}_log", session: "logs"
 
     ## Fields
 
