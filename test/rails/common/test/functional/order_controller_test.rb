@@ -8,7 +8,7 @@ class OrderControllerTest < ActionController::TestCase
   end
 
   test "should have log level set" do
-    assert_equal ActiveSupport::BufferedLogger.const_get(Rails.configuration.log_level.to_s.upcase), Rails.logger.level
+    assert_equal ActiveSupport::Logger.const_get(Rails.configuration.log_level.to_s.upcase), Rails.logger.level
   end
 
   test "should have auto flushing set in development" do

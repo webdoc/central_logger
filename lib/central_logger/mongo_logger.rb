@@ -1,5 +1,5 @@
 module CentralLogger
-  class MongoLogger < ActiveSupport::BufferedLogger
+  class MongoLogger < ActiveSupport::Logger
 
     ## Mixins
 
@@ -142,8 +142,8 @@ module CentralLogger
     # @return hash of the log levels mapped from constants from lookup reverse
     #   mapped required later.
     def log_levels
-      @log_level_hash ||= ActiveSupport::BufferedLogger::Severity.constants.inject({}) do |h, v|
-        h[ActiveSupport::BufferedLogger::Severity.const_get(v.to_s)] = v.to_s
+      @log_level_hash ||= ActiveSupport::Logger::Severity.constants.inject({}) do |h, v|
+        h[ActiveSupport::Logger::Severity.const_get(v.to_s)] = v.to_s
         h
       end
     end
