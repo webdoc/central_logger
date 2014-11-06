@@ -40,6 +40,7 @@ module CentralLogger
       # Only enable file logging if specified.
       unless disable_file_logging?
         super(path, level)
+        @log.level = level
       end
 
     # Enable file loggin on any errors.
